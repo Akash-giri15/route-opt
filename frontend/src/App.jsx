@@ -1,30 +1,21 @@
-// src/App.jsx
 import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import axios from 'axios';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
-let DefaultIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41]
-});
+let DefaultIcon = L.icon({ iconUrl: icon, shadowUrl: iconShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+// --- UTILITY COMPONENTS ---
 function LocationSelector({ setOrigin, setDestination, origin, destination }) {
   useMapEvents({
     click(e) {
       const { lat, lng } = e.latlng;
-      if (!origin) {
-        setOrigin({ lat, lng });
-      } else if (!destination) {
-        setDestination({ lat, lng });
-      }
+      if (!origin) setOrigin({ lat, lng });
+      else if (!destination) setDestination({ lat, lng });
     },
   });
   return null;
@@ -33,174 +24,207 @@ function LocationSelector({ setOrigin, setDestination, origin, destination }) {
 function ChangeView({ bounds }) {
   const map = useMap();
   useEffect(() => {
-    if (bounds && bounds.length > 0) {
-      map.fitBounds(bounds);
-    }
+    if (bounds && bounds.length > 0) map.fitBounds(bounds);
   }, [bounds, map]);
   return null;
 }
 
+// --- MAIN COMPONENT ---
 export default function App() {
   const [origin, setOrigin] = useState(null);
   const [destination, setDestination] = useState(null);
-  const [route, setRoute] = useState([]);
-  const [distance, setDistance] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [benchmarking, setBenchmarking] = useState(false); // NEW
-  const [stats, setStats] = useState(null); // NEW
   const [error, setError] = useState(null);
 
+  // Unified State for Comparison
+  const [comparison, setComparison] = useState(null);
+  // Structure: { 
+  //   type: 'ALGO' | 'TRAFFIC' | 'STRATEGY',
+  //   dataA: { label, time, distance, path, color },
+  //   dataB: { label, time, distance, path, color },
+  //   tagline: "100x Faster"
+  // }
+
   const handleReset = () => {
-    setOrigin(null);
-    setDestination(null);
-    setRoute([]);
-    setDistance(null);
-    setStats(null);
-    setError(null);
+    setOrigin(null); setDestination(null);
+    setComparison(null); setError(null);
   };
 
-  const fetchRoute = async () => {
+  const runBenchmark = async (type) => {
     if (!origin || !destination) return;
-    setLoading(true);
-    setStats(null); // Clear old stats
+    setLoading(true); setComparison(null); setError(null);
+    
+    const params = { origin: `${origin.lat},${origin.lng}`, destination: `${destination.lat},${destination.lng}` };
+    
     try {
-      const originStr = `${origin.lat},${origin.lng}`;
-      const destStr = `${destination.lat},${destination.lng}`;
-      const res = await axios.get(`http://localhost:8000/route`, {
-        params: { origin: originStr, destination: destStr }
-      });
-      setRoute(res.data.path);
-      setDistance(res.data.distance_km);
+      let res;
+      let data = {};
+
+      if (type === 'ALGO') {
+        res = await axios.get(`http://localhost:8000/compare`, { params });
+        data = {
+            type: 'ALGO',
+            tagline: `${res.data.comparison} SPEEDUP`,
+            dataA: { ...res.data.algo_a, color: "#ef4444" }, // Red
+            dataB: { ...res.data.algo_b, color: "#22c55e" }  // Green
+        };
+      } 
+      else if (type === 'TRAFFIC') {
+        res = await axios.get(`http://localhost:8000/benchmark_traffic`, { params });
+        // Normalize keys from backend
+        const tStatic = res.data.static;
+        const tLive = res.data.live;
+        data = {
+            type: 'TRAFFIC',
+            tagline: "TRAFFIC IMPACT ANALYSIS",
+            dataA: { label: "Static CH", ...tStatic, color: "#22c55e" }, // Green
+            dataB: { label: "Live Hybrid", ...tLive, color: "#f97316" }  // Orange
+        };
+      } 
+      else if (type === 'STRATEGY') {
+        res = await axios.get(`http://localhost:8000/compare_strategies`, { params });
+        const sStd = res.data.standard;
+        const sWei = res.data.weighted;
+        const speedup = (sStd.time / sWei.time).toFixed(1);
+        data = {
+            type: 'STRATEGY',
+            tagline: `${speedup}x FASTER STRATEGY`,
+            dataA: { label: "Standard A*", ...sStd, color: "#ef4444" }, // Red
+            dataB: { label: "Weighted A*", ...sWei, color: "#f97316" }  // Orange
+        };
+      }
+
+      setComparison(data);
     } catch (err) {
       console.error(err);
-      setError("Failed to fetch route.");
+      setError("Benchmark failed. Backend might be offline.");
     } finally {
       setLoading(false);
     }
   };
 
-  // --- NEW FUNCTION: Run Benchmark ---
-  const runBenchmark = async () => {
-    if (!origin || !destination) return;
-    setBenchmarking(true);
-    try {
-      const originStr = `${origin.lat},${origin.lng}`;
-      const destStr = `${destination.lat},${destination.lng}`;
-      
-      // Call the new compare endpoint
-      const res = await axios.get(`http://localhost:8000/compare`, {
-        params: { origin: originStr, destination: destStr }
-      });
-      
-      setStats(res.data);
-    } catch (err) {
-      console.error(err);
-      setError("Benchmark failed.");
-    } finally {
-      setBenchmarking(false);
-    }
-  };
-
   return (
-    <div className="flex h-screen w-full flex-col md:flex-row font-sans">
+    <div className="flex h-screen w-full flex-col md:flex-row font-sans text-gray-100 bg-gray-900">
       
-      {/* Sidebar */}
-      <div className="w-full md:w-1/3 lg:w-1/4 bg-gray-900 text-white p-6 flex flex-col gap-4 shadow-2xl z-20 overflow-y-auto">
+      {/* SIDEBAR */}
+      <div className="w-full md:w-1/3 lg:w-1/4 bg-gray-900 p-6 flex flex-col gap-4 shadow-2xl z-20 overflow-y-auto border-r border-gray-800">
         <div>
           <h1 className="text-2xl font-bold text-blue-400">Route Opt Engine</h1>
-          <p className="text-gray-400 text-xs mt-1">Resume Project • Contraction Hierarchies</p>
+          <p className="text-gray-500 text-xs mt-1">Advanced Pathfinding Benchmarks</p>
         </div>
 
-        {/* Selection Status */}
-        <div className="space-y-2">
-            <div className={`p-3 rounded text-sm border ${origin ? 'border-green-500 bg-green-900/20' : 'border-gray-700'}`}>
-                <span className="font-bold text-green-400">START</span>
-                <div className="text-xs text-gray-300 font-mono mt-1">
-                    {origin ? `${origin.lat.toFixed(4)}, ${origin.lng.toFixed(4)}` : 'Select on map'}
-                </div>
-            </div>
-            <div className={`p-3 rounded text-sm border ${destination ? 'border-red-500 bg-red-900/20' : 'border-gray-700'}`}>
-                <span className="font-bold text-red-400">DESTINATION</span>
-                <div className="text-xs text-gray-300 font-mono mt-1">
-                    {destination ? `${destination.lat.toFixed(4)}, ${destination.lng.toFixed(4)}` : 'Select on map'}
-                </div>
-            </div>
-        </div>
-
-        {/* Main Actions */}
-        <div className="flex flex-col gap-2">
-            <button
-                onClick={fetchRoute}
-                disabled={!origin || !destination || loading}
-                className="py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 rounded font-bold transition-colors shadow-lg"
-            >
-                {loading ? 'Calculating...' : 'Find Best Route'}
+        {/* CONTROLS */}
+        <div className="flex flex-col gap-2 mt-4">
+            <button onClick={() => runBenchmark('ALGO')} disabled={loading || !origin} 
+                className="py-3 px-4 bg-gray-800 border border-gray-700 hover:border-purple-500 hover:text-purple-400 rounded transition-all text-sm font-bold text-left flex justify-between items-center group">
+                <span>1. A* (Python) vs CH (C++)</span>
+                <span className="text-xs bg-purple-900/30 text-purple-400 px-2 py-1 rounded group-hover:bg-purple-500 group-hover:text-white transition-colors">Raw Speed</span>
             </button>
             
-            {/* --- NEW: Compare Button --- */}
-            <button
-                onClick={runBenchmark}
-                disabled={!origin || !destination || benchmarking}
-                className="py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 rounded font-bold transition-colors shadow-lg"
-            >
-                {benchmarking ? 'Running Benchmark...' : '⚔️ Compare A* vs CH'}
+            <button onClick={() => runBenchmark('TRAFFIC')} disabled={loading || !origin} 
+                className="py-3 px-4 bg-gray-800 border border-gray-700 hover:border-green-500 hover:text-green-400 rounded transition-all text-sm font-bold text-left flex justify-between items-center group">
+                <span>2. Static vs Live Traffic</span>
+                <span className="text-xs bg-green-900/30 text-green-400 px-2 py-1 rounded group-hover:bg-green-500 group-hover:text-white transition-colors">Utility</span>
+            </button>
+            
+            <button onClick={() => runBenchmark('STRATEGY')} disabled={loading || !origin} 
+                className="py-3 px-4 bg-gray-800 border border-gray-700 hover:border-orange-500 hover:text-orange-400 rounded transition-all text-sm font-bold text-left flex justify-between items-center group">
+                <span>3. Standard vs Weighted A*</span>
+                <span className="text-xs bg-orange-900/30 text-orange-400 px-2 py-1 rounded group-hover:bg-orange-500 group-hover:text-white transition-colors">Heuristic</span>
             </button>
 
-            <button onClick={handleReset} className="py-2 border border-gray-600 text-gray-400 hover:bg-gray-800 rounded text-sm">
-                Reset
+            <button onClick={handleReset} className="mt-2 py-2 text-gray-500 hover:text-white text-xs uppercase tracking-widest border border-dashed border-gray-700 hover:border-gray-500 rounded">
+                Reset Map
             </button>
         </div>
 
-        {/* Errors */}
-        {error && <div className="text-red-400 text-xs bg-red-900/20 p-2 rounded border border-red-900">{error}</div>}
-        
-        {/* Distance Result */}
-        {distance && !stats && (
-             <div className="mt-2 p-4 bg-gray-800 rounded border border-gray-700 text-center animate-fade-in">
-                <span className="text-gray-400 text-xs uppercase tracking-wider">Total Distance</span>
-                <div className="text-3xl font-bold text-white">{distance} <span className="text-lg text-gray-500">km</span></div>
-             </div>
-        )}
+        {/* LOADING & ERROR */}
+        {loading && <div className="text-center p-4 text-blue-400 animate-pulse">Running Benchmark...</div>}
+        {error && <div className="p-3 bg-red-900/20 border border-red-800 text-red-400 text-xs rounded">{error}</div>}
 
-        {/* --- NEW: Comparison Results Card --- */}
-        {stats && (
-            <div className="mt-2 p-4 bg-gray-800 rounded border border-purple-500/50 animate-fade-in">
-                <h3 className="text-purple-400 font-bold text-center mb-3 text-sm uppercase tracking-widest">Performance Benchmark</h3>
-                
-                <div className="grid grid-cols-2 gap-2 mb-4">
-                    <div className="bg-gray-900 p-2 rounded text-center">
-                        <div className="text-gray-500 text-xs">Standard A*</div>
-                        <div className="text-lg font-mono text-red-400">{stats.astar.time} ms</div>
+        {/* STANDARDIZED RESULTS PANEL */}
+        {comparison && (
+            <div className="mt-4 animate-fade-in">
+                <div className="text-center text-xs font-bold text-gray-500 uppercase tracking-widest mb-2 border-b border-gray-800 pb-2">
+                    {comparison.tagline}
+                </div>
+
+                {/* Card A */}
+                <div className="mb-3 p-3 bg-gray-800/50 rounded border-l-4" style={{ borderColor: comparison.dataA.color }}>
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-sm" style={{ color: comparison.dataA.color }}>{comparison.dataA.label}</span>
+                        <span className="text-[10px] text-gray-500 bg-gray-900 px-1 rounded">CASE A</span>
                     </div>
-                    <div className="bg-gray-900 p-2 rounded text-center border border-green-500/30">
-                        <div className="text-green-400 text-xs font-bold">Your CH Engine</div>
-                        <div className="text-lg font-mono text-green-400">{stats.ch.time} ms</div>
+                    <div className="grid grid-cols-2 gap-2 text-xs font-mono text-gray-300">
+                        <div>⏱ {comparison.dataA.time} ms</div>
+                        <div>📏 {comparison.dataA.distance} km</div>
                     </div>
                 </div>
 
-                <div className="bg-green-900/30 p-3 rounded text-center border border-green-500">
-                    <div className="text-gray-300 text-xs uppercase">Speed Improvement</div>
-                    <div className="text-2xl font-black text-white">
-                        {stats.speedup}x <span className="text-sm font-normal text-green-400">FASTER</span>
+                {/* Card B */}
+                <div className="p-3 bg-gray-800/50 rounded border-l-4" style={{ borderColor: comparison.dataB.color }}>
+                    <div className="flex justify-between items-center mb-1">
+                        <span className="font-bold text-sm" style={{ color: comparison.dataB.color }}>{comparison.dataB.label}</span>
+                        <span className="text-[10px] text-gray-500 bg-gray-900 px-1 rounded">CASE B</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs font-mono text-gray-300">
+                        <div>⏱ {comparison.dataB.time} ms</div>
+                        <div>📏 {comparison.dataB.distance} km</div>
                     </div>
                 </div>
             </div>
         )}
       </div>
 
-      {/* Map */}
+      {/* MAP */}
       <div className="flex-1 relative z-10">
-        <MapContainer center={[12.9716, 77.5946]} zoom={12} style={{ height: "100%", width: "100%" }}>
-          <TileLayer 
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" 
-            attribution='&copy; OpenStreetMap &copy; CARTO'
-          />
+        <MapContainer center={[12.9716, 77.5946]} zoom={13} style={{ height: "100%", width: "100%" }}>
+          <TileLayer url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" attribution='&copy; CARTO' />
           <LocationSelector setOrigin={setOrigin} setDestination={setDestination} origin={origin} destination={destination} />
+          
           {origin && <Marker position={[origin.lat, origin.lng]}><Popup>Start</Popup></Marker>}
-          {destination && <Marker position={[destination.lat, destination.lng]}><Popup>Destination</Popup></Marker>}
-          {route.length > 0 && <Polyline positions={route} color="#4ade80" weight={6} opacity={0.8} />}
-          <ChangeView bounds={route.length > 0 ? route : null} />
+          {destination && <Marker position={[destination.lat, destination.lng]}><Popup>Dest</Popup></Marker>}
+
+          {/* DYNAMIC PATH RENDERING */}
+          {comparison && (
+              <>
+                  {/* Path A (Usually Baseline - Thicker, Transparent) */}
+                  {comparison.dataA.path.length > 0 && (
+                      <Polyline 
+                        positions={comparison.dataA.path} 
+                        color={comparison.dataA.color} 
+                        weight={8} 
+                        opacity={0.4} 
+                      />
+                  )}
+                  {/* Path B (Usually Comparison - Thinner, Solid) */}
+                  {comparison.dataB.path.length > 0 && (
+                      <Polyline 
+                        positions={comparison.dataB.path} 
+                        color={comparison.dataB.color} 
+                        weight={4} 
+                        opacity={1.0} 
+                      />
+                  )}
+                  <ChangeView bounds={comparison.dataA.path} />
+              </>
+          )}
         </MapContainer>
+        
+        {/* Floating Legend for Map */}
+        {comparison && (
+            <div className="absolute top-4 right-4 bg-gray-900/90 p-3 rounded shadow-xl border border-gray-700 z-[1000] text-xs">
+                <div className="font-bold text-gray-400 mb-2 uppercase text-[10px]">Graph Legend</div>
+                <div className="flex items-center gap-2 mb-1">
+                    <div className="w-4 h-1 rounded" style={{ backgroundColor: comparison.dataA.color }}></div>
+                    <span className="text-gray-200">{comparison.dataA.label}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-4 h-1 rounded" style={{ backgroundColor: comparison.dataB.color }}></div>
+                    <span className="text-gray-200">{comparison.dataB.label}</span>
+                </div>
+            </div>
+        )}
       </div>
     </div>
   );

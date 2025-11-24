@@ -6,6 +6,7 @@
 #include <tuple>
 #include <limits>
 #include <iostream>
+#include <algorithm>
 
 namespace py = pybind11;
 
@@ -153,6 +154,68 @@ public:
         path.push_back(v);
     }
 
+    double query_dist(int origin, int dest) {
+        if (origin < 0 || origin >= num_nodes || dest < 0 || dest >= num_nodes) {
+            return std::numeric_limits<double>::infinity();
+        }
+
+        // Standard Bi-directional Dijkstra (simplified for distance only)
+        std::priority_queue<std::pair<double, int>, std::vector<std::pair<double, int>>, std::greater<>> fwd_pq, bwd_pq;
+        std::vector<double> fwd_dist(num_nodes, std::numeric_limits<double>::infinity());
+        std::vector<double> bwd_dist(num_nodes, std::numeric_limits<double>::infinity());
+
+        fwd_pq.push({0.0, origin});
+        fwd_dist[origin] = 0.0;
+        bwd_pq.push({0.0, dest});
+        bwd_dist[dest] = 0.0;
+
+        double mu = std::numeric_limits<double>::infinity();
+
+        while (!fwd_pq.empty() || !bwd_pq.empty()) {
+            if (!fwd_pq.empty()) {
+                auto [d, u] = fwd_pq.top(); fwd_pq.pop();
+                if (d > mu) { /* Optimization: Prune */ } 
+                else {
+                    for (const auto& e : adj_out[u]) {
+                        if (rank[e.target] > rank[u]) {
+                            double new_dist = d + e.weight;
+                            if (new_dist < fwd_dist[e.target]) {
+                                fwd_dist[e.target] = new_dist;
+                                fwd_pq.push({new_dist, e.target});
+                                if (bwd_dist[e.target] != std::numeric_limits<double>::infinity()) {
+                                    mu = std::min(mu, new_dist + bwd_dist[e.target]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!bwd_pq.empty()) {
+                auto [d, u] = bwd_pq.top(); bwd_pq.pop();
+                if (d > mu) { /* Prune */ }
+                else {
+                    for (const auto& e : adj_in[u]) {
+                        if (rank[e.target] > rank[u]) {
+                            double new_dist = d + e.weight;
+                            if (new_dist < bwd_dist[e.target]) {
+                                bwd_dist[e.target] = new_dist;
+                                bwd_pq.push({new_dist, e.target});
+                                if (fwd_dist[e.target] != std::numeric_limits<double>::infinity()) {
+                                    mu = std::min(mu, new_dist + fwd_dist[e.target]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Return infinity if no path, otherwise km
+        return (mu == std::numeric_limits<double>::infinity()) ? -1.0 : mu / 1000.0;
+    }
+
+
+
     py::tuple query(int origin, int dest) {
         if (origin < 0 || origin >= num_nodes || dest < 0 || dest >= num_nodes) {
             return py::make_tuple(py::list(), 0.0);
@@ -258,5 +321,6 @@ PYBIND11_MODULE(ch_native, m) {
         .def("set_rank", &CHGraph::set_rank)
         .def("build_ch", &CHGraph::build_ch)
         .def("get_graph_data", &CHGraph::get_graph_data)
-        .def("query", &CHGraph::query);
+        .def("query", &CHGraph::query)
+        .def("query_dist", &CHGraph::query_dist);
 }
